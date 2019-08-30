@@ -62,7 +62,6 @@ class NandIO:
             cmd_type|=self.ADR_CL
         if al==1:
             cmd_type|=self.ADR_AL
-        print("write", hex(cmd_type))
 
         cmds+=[Ftdi.WRITE_EXTENDED, cmd_type, 0, ord(data[0])]
         for i in range(1,len(data),1):
@@ -70,17 +69,15 @@ class NandIO:
             #   cmds+=[Ftdi.WRITE_SHORT, 0, ord(data[i])]
             cmds+=[Ftdi.WRITE_SHORT, 0, ord(data[i])]
         print_cmd = [str(hex(elem)) for elem in cmds]
-        print("final value write:", print_cmd)
-        print("Enter to validate ")
-        input()
         self.Ftdi.write_data(Array('B', cmds))
+        return cmds
 
     def sendCmd(self,cmd):
         print("sendCmd", hex(cmd))
-        self.nandWrite(1,0,chr(cmd))
+        return self.nandWrite(1,0,chr(cmd))
 
     def sendReset(self):
-        self.sendCmd(self.NAND_CMD_RESET)
+        self.sendCmd(NAND_CMD_RESET)
 
     def readFlashData(self,count):
         return self.nandRead(0,0,count)
@@ -93,7 +90,7 @@ class NandIO:
             data += chr(addr & 0xff)
             addr = addr >> 8
 
-        self.nandWrite(0,1,data)
+        return self.nandWrite(0,1,data)
 
     def nandRead(self,cl,al,count):
         cmds=[]
@@ -119,6 +116,7 @@ class Interface:
         super().__init__()
 
         self.planned_command = list()
+        self.list_button_control_io = list()
 
         self.top = tkinter.Tk()
         self.init_button()
@@ -131,19 +129,28 @@ class Interface:
         init_button = tkinter.Button(self.top, text="Init connection", command=self.button_init_con)
         init_button.grid(row=0, column=0)
 
-        self.reset_button = tkinter.Button(self.top, text="Reset", command=self.button_reset, 
+        reset_button = tkinter.Button(self.top, text="Reset", command=self.button_reset, 
             state=tkinter.DISABLED)
-        self.reset_button.grid(row=0, column=1)
-        self.get_id_button = tkinter.Button(self.top, text="GetId", command=self.button_get_id, 
+        reset_button.grid(row=0, column=1)
+        self.list_button_control_io.append(reset_button)
+
+        get_id_button = tkinter.Button(self.top, text="GetId", command=self.button_get_id, 
             state=tkinter.DISABLED)
-        self.get_id_button.grid(row=0, column=2)
+        get_id_button.grid(row=0, column=2)
+        self.list_button_control_io.append(get_id_button)
+
+        read_button = tkinter.Button(self.top, text="Read", command=self.button_read, 
+            state=tkinter.DISABLED)
+        read_button.grid(row=0, column=3)
+        self.list_button_control_io.append(read_button)
 
         self.event_text, ybar = self._init_text_scroll()
-        self.event_text.grid(row=1, column=0, columnspan=3, rowspan=2, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
-        ybar.grid(row=1, column=4, rowspan=2, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
+        self.event_text.grid(row=1, column=0, columnspan=4, rowspan=3, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
+        ybar.grid(row=1, column=5, rowspan=3, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
 
+        # FRAME to display planned commands
         frame = tkinter.Frame(self.top)
-        frame.grid(row=1, column=6, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)        
+        frame.grid(row=1, column=7, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)        
 
         tkinter.Label(frame, text="Planned commands").grid(row=0, column=0, columnspan=4)
 
@@ -154,9 +161,12 @@ class Interface:
             command=self.button_next_instruction, state=tkinter.DISABLED)
         self.next_instruction_button.grid(row=2, column=0, columnspan=3)
 
+        # Display 
+        tkinter.Label(self.top, text="Encoded executed commands").grid(row=2, column=6, columnspan=3)
+
         self.cmd_text, ybar = self._init_text_scroll()
-        self.cmd_text.grid(row=2, column=6, columnspan=3, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
-        ybar.grid(row=2, column=10, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
+        self.cmd_text.grid(row=3, column=6, columnspan=3, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
+        ybar.grid(row=3, column=10, sticky=tkinter.N+tkinter.S+tkinter.E+tkinter.W)
 
 
     def _init_text_scroll(self, parent=None):
@@ -172,6 +182,12 @@ class Interface:
         self.add_planned_cmd(NAND_CMD_READID)
         self.add_planned_addresse((0, 1))
 
+    def button_read(self):
+        pass  # TODO
+
+    def button_reset(self):
+        self.add_planned_cmd(NAND_CMD_RESET)
+
     def button_next_instruction(self):
         command = self.planned_command.pop(0)
         key, value = command
@@ -179,11 +195,13 @@ class Interface:
         self.write_info_log("Execute: " + self._cmd_to_string(command))
 
         if key == "CMD":
-            self.io.sendCmd(value)
+            result = self.io.sendCmd(value)
         elif key == "ADR":
-            self.io.sendAddr(value[0], value[1])
+            result = self.io.sendAddr(value[0], value[1])
         else:
             self.write_error_log("Could not execute this command (unknow operation) !")
+
+        self.cmd_text.insert("end", " ".join([hex(elem) for elem in result]) + "\n")
 
         self.planed_cmd_text.delete("1.0", "2.0")
         self.planed_cmd_text.update()
@@ -197,11 +215,9 @@ class Interface:
         except ReferenceError as es:
             self.write_error_log(str(es))
             return
-        self.reset_button.config(state="normal")
-        self.get_id_button.config(state="normal")
 
-    def button_reset(self):
-        self.io.sendReset()
+        for button in self.list_button_control_io:
+            button.config(state="normal")
 
     def add_planned_cmd(self, cmd_code):
         self.add_planned_command_line(("CMD", cmd_code))
@@ -211,7 +227,7 @@ class Interface:
 
     def add_planned_command_line(self, command):
         self.planned_command.append(command)
-        self.planed_cmd_text.insert("end", self._cmd_to_string(command))
+        self.planed_cmd_text.insert("end", self._cmd_to_string(command) + "\n")
         self.next_instruction_button.config(state="normal")
 
     def _cmd_to_string(self, command):
@@ -224,7 +240,7 @@ class Interface:
         else:
             value = str(command[1])
 
-        return "[" + key + "] " + value + "\n"
+        return "[" + key + "] " + value
 
     def write_error_log(self, message):
         self._write_log("[ERROR] " + message)
